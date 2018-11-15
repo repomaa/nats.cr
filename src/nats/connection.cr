@@ -23,10 +23,12 @@ module Nats
       @subscriptions = {} of String => Subscription
       @max_message_counters = {} of String => Int32
       @closed = false
-      @mutex = Mutex.new
+      @read = Mutex.new
+      @write = Mutex.new
 
-      message = @mutex.synchronize { read_protocol_message }
-      handle_message(message)
+      @read.synchronize do
+        handle_message(read_protocol_message)
+      end
     end
 
     def self.new(url, **args)
@@ -49,8 +51,9 @@ module Nats
     def listen
       loop do
         break if closed?
-        message = @mutex.synchronize { read_protocol_message }
-        handle_message(message)
+        @read.synchronize do
+          handle_message(read_protocol_message)
+        end
       end
     ensure
       close
@@ -62,12 +65,10 @@ module Nats
 
       Subscription.new(sid, self).tap do |subscription|
         @subscriptions[sid] = subscription
-        response = @mutex.synchronize do
-          @socket << sub_message
-          read_protocol_message
+        @read.synchronize do
+          @write.synchronize { @socket << sub_message }
+          wait_for_ok
         end
-
-        handle_message(response)
       end
     end
 
@@ -75,23 +76,28 @@ module Nats
       unsub_message = Protocol::Unsub.new(sid, max_messages)
 
       @max_message_counters[sid] = max_messages if max_messages
-      response = @mutex.synchronize do
-        @socket << unsub_message
-        read_protocol_message
+      @read.synchronize do
+        @write.synchronize { @socket << unsub_message }
+        wait_for_ok
       end
 
-      handle_message(response)
       @subscriptions.delete(sid) unless max_messages
     end
 
     def publish(subject : String, payload)
       pub_message = Protocol::Pub.new(subject, payload.to_slice)
-      response = @mutex.synchronize do
-        @socket << pub_message
-        read_protocol_message
+      @read.synchronize do
+        @write.synchronize { @socket << pub_message }
+        wait_for_ok
       end
+    end
 
-      handle_message(response)
+    private def wait_for_ok
+      loop do
+        message = read_protocol_message
+        handle_message(message)
+        break if message.is_a?(Protocol::Ok)
+      end
     end
 
     private def handle_message(error : Protocol::Error)
@@ -132,7 +138,7 @@ module Nats
     end
 
     private def handle_message(ping : Protocol::Ping)
-      @mutex.synchronize { @socket << Protocol::Pong.new }
+      @write.synchronize { @socket << Protocol::Pong.new }
     end
 
     private def handle_message(pong : Protocol::Pong)
@@ -141,10 +147,10 @@ module Nats
     private def read_protocol_message
       type = read_type
       case type.try(&.upcase)
-      when "-ERROR" then Protocol::Error.from_io(@socket)
+      when "-ERR" then Protocol::Error.from_io(@socket)
       when "INFO" then Protocol::Info.from_io(@socket)
       when "MSG" then Protocol::Msg.from_io(@socket)
-      when "+OK" then Protocol::Msg.from_io(@socket)
+      when "+OK" then Protocol::Ok.from_io(@socket)
       when "PING" then Protocol::Ping.from_io(@socket)
       when "PONG" then Protocol::Pong.from_io(@socket)
       when nil then raise Protocol::ProtocolError.new("Connection closed")
@@ -153,22 +159,10 @@ module Nats
     end
 
     private def read_type
-      delimiters_to_match = 2
-
       String.build do |io|
         loop do
           char = @socket.read_char
-          if char == '\r' && delimiters_to_match == 2
-            delimiters_to_match -= 1
-            next
-          elsif char == '\n' && delimiters_to_match == 1
-            break
-          elsif char == ' '
-            break
-          else
-            delimiters_to_match = 2
-          end
-
+          break if char == ' ' || char == '\r' && @socket.read_char == '\n'
           io << char
         end
       end
@@ -190,7 +184,7 @@ module Nats
         raise "Authentication required but neither user/pass nor token was given"
       end
 
-      @mutex.synchronize { @socket << connect_message }
+      @write.synchronize { @socket << connect_message }
     end
 
     private def initiate_tls(info)

@@ -1,7 +1,6 @@
 module Nats::Protocol
   struct Ping
     def self.from_io(io : IO)
-      io.gets("\r\n")
       new
     end
 
