@@ -1,0 +1,17 @@
+name: nats
+version: 0.1.0
+
+authors:
+  - Joakim Reinert <mail@jreinert.com>
+
+development_dependencies:
+  paladin:
+    github: jreinert/paladin
+
+targets:
+  spec:
+    main: spec/nats_spec.cr
+
+crystal: 0.27.0
+
+license: MIT
