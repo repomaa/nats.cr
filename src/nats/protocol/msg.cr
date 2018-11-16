@@ -1,9 +1,11 @@
 require "json"
-require "./message"
+require "./server_message"
 require "./protocol_error"
 
 module Nats::Protocol
-  struct Msg < Message
+  struct Msg
+    include ServerMessage
+
     getter subject : String
     getter sid : String
     getter reply_to : String?

@@ -1,11 +1,13 @@
 require "json"
 require "../../nats"
+require "./client_message"
 
 module Nats::Protocol
   struct Connect
+    include ClientMessage
     include JSON::Serializable
 
-    property verbose = true
+    property verbose = false
     property pedantic = false
     property tls_required = false
     property auth_token : String?

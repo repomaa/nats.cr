@@ -1,5 +1,11 @@
+require "./server_message"
+require "./client_message"
+
 module Nats::Protocol
   struct Pong
+    include ServerMessage
+    include ClientMessage
+
     def self.from_io(io : IO)
       new
     end

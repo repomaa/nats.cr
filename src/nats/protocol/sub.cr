@@ -1,5 +1,9 @@
+require "./client_message"
+
 module Nats::Protocol
   struct Sub
+    include ClientMessage
+
     getter sid
 
     def initialize(@subject : String, @queue_group : String? = nil)

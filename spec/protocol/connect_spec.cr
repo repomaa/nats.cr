@@ -5,7 +5,7 @@ describe Nats::Protocol::Connect do
     it "serializes the message correctly" do
       connect = Nats::Protocol::Connect.new
       connect.to_s.should eq(
-        %|CONNECT {"verbose":true,"pedantic":false,"tls_required":false,"lang":"crystal","version":"#{Nats::VERSION}","protocol":1,"echo":false}\r\n|
+        %|CONNECT {"verbose":false,"pedantic":false,"tls_required":false,"lang":"crystal","version":"#{Nats::VERSION}","protocol":1,"echo":false}\r\n|
       )
     end
   end

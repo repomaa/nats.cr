@@ -1,8 +1,9 @@
 require "json"
-require "./message"
+require "./server_message"
 
 module Nats::Protocol
-  struct Info < Message
+  struct Info
+    include ServerMessage
     include JSON::Serializable
 
     getter server_id : String

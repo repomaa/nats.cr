@@ -1,3 +1,4 @@
+require "logger"
 require "socket"
 require "uri"
 require "openssl"
@@ -17,18 +18,19 @@ module Nats
       @pass : String? = nil,
       @token : String? = nil,
       @echo = false,
-      @client_name : String? = nil
+      @client_name : String? = nil,
+      @logger : Logger = Logger.new(STDERR)
     )
       @socket = TCPSocket.new(host, port)
       @subscriptions = {} of String => Subscription
       @max_message_counters = {} of String => Int32
       @closed = false
-      @read = Mutex.new
-      @write = Mutex.new
+      @inbox = Channel(Protocol::ServerMessage?).new(128)
+      @outbox = Channel(Protocol::ClientMessage?).new(128)
 
-      @read.synchronize do
-        handle_message(read_protocol_message)
-      end
+      spawn inbox
+      spawn outbox
+      spawn listen
     end
 
     def self.new(url, **args)
@@ -45,83 +47,93 @@ module Nats
 
     def close
       @socket.close unless closed?
+      @inbox.send(nil)
+      @outbox.send(nil)
       @closed = true
     end
 
     def listen
-      loop do
-        break if closed?
-        @read.synchronize do
-          handle_message(read_protocol_message)
-        end
+      until closed?
+        message = @inbox.receive
+        break if message.nil?
+        handle_message(message)
       end
     ensure
       close
     end
 
     def subscribe(subject : String, queue_group : String? = nil)
+      raise ArgumentError.new("Connection closed") if closed?
       sub_message = Protocol::Sub.new(subject, queue_group)
       sid = sub_message.sid
 
       Subscription.new(sid, self).tap do |subscription|
         @subscriptions[sid] = subscription
-        @read.synchronize do
-          @write.synchronize { @socket << sub_message }
-          wait_for_ok
-        end
+        @outbox.send(sub_message)
       end
     end
 
     def unsubscribe(sid : String, max_messages : Int32? = nil)
+      raise ArgumentError.new("Connection closed") if closed?
       unsub_message = Protocol::Unsub.new(sid, max_messages)
 
       @max_message_counters[sid] = max_messages if max_messages
-      @read.synchronize do
-        @write.synchronize { @socket << unsub_message }
-        wait_for_ok
-      end
-
+      @outbox.send(unsub_message)
       @subscriptions.delete(sid) unless max_messages
     end
 
     def publish(subject : String, payload)
+      raise ArgumentError.new("Connection closed") if closed?
       pub_message = Protocol::Pub.new(subject, payload.to_slice)
-      @read.synchronize do
-        @write.synchronize { @socket << pub_message }
-        wait_for_ok
-      end
+      @outbox.send(pub_message)
     end
 
-    private def wait_for_ok
-      loop do
+    private def inbox
+      until closed?
         message = read_protocol_message
-        handle_message(message)
-        break if message.is_a?(Protocol::Ok)
+        @inbox.send(message)
       end
+    ensure
+      close
     end
 
-    private def handle_message(error : Protocol::Error)
+    private def outbox
+      until closed?
+        message = @outbox.receive
+        break if message.nil?
+        @socket << message
+      end
+    ensure
+      close
+    end
+
+    private def handle_message(error : Protocol::Err)
       close unless error.keep_open?
       raise Protocol::ProtocolError.new(error.message)
     end
 
     private def handle_message(info : Protocol::Info)
+      puts info.inspect
       info.connect_urls.try do |urls|
         url = urls.sample
         next if url.nil?
-        uri = URI.parse(url)
-        @socket.close
-        host = uri.host
-        port = uri.port
-        if host.nil? || port.nil?
-          raise Protocol::ProtocolError.new("Invalid connect_url '#{url}'")
-        end
-
-        @socket = TCPSocket.new(host, port)
+        reconnect(url)
       end
 
       initiate_tls(info) if info.tls_required?
       connect(info)
+    end
+
+    private def reconnect(url)
+      uri = URI.parse(url)
+      @socket.close
+      host = uri.host
+      port = uri.port
+      if host.nil? || port.nil?
+        raise Protocol::ProtocolError.new("Invalid connect_url '#{url}'")
+      end
+
+      @socket = TCPSocket.new(host, port)
     end
 
     private def handle_message(msg : Protocol::Msg)
@@ -138,7 +150,7 @@ module Nats
     end
 
     private def handle_message(ping : Protocol::Ping)
-      @write.synchronize { @socket << Protocol::Pong.new }
+      @outbox.send(Protocol::Pong.new)
     end
 
     private def handle_message(pong : Protocol::Pong)
@@ -147,7 +159,7 @@ module Nats
     private def read_protocol_message
       type = read_type
       case type.try(&.upcase)
-      when "-ERR" then Protocol::Error.from_io(@socket)
+      when "-ERR" then Protocol::Err.from_io(@socket)
       when "INFO" then Protocol::Info.from_io(@socket)
       when "MSG" then Protocol::Msg.from_io(@socket)
       when "+OK" then Protocol::Ok.from_io(@socket)
@@ -162,6 +174,7 @@ module Nats
       String.build do |io|
         loop do
           char = @socket.read_char
+          raise Exception.new("EOF received") if char.nil?
           break if char == ' ' || char == '\r' && @socket.read_char == '\n'
           io << char
         end
@@ -184,7 +197,7 @@ module Nats
         raise "Authentication required but neither user/pass nor token was given"
       end
 
-      @write.synchronize { @socket << connect_message }
+      @outbox.send(connect_message)
     end
 
     private def initiate_tls(info)

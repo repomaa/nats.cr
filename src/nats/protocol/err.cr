@@ -1,7 +1,10 @@
 require "./protocol_error"
+require "./server_message"
 
 module Nats::Protocol
-  struct Error
+  struct Err
+    include ServerMessage
+
     BENIGN_ERRORS = [
       "Invalid Subject",
       "Permissions Violation"

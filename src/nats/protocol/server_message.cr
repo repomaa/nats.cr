@@ -1,4 +1,4 @@
 module Nats::Protocol
-  abstract struct Message
+  module ServerMessage
   end
 end

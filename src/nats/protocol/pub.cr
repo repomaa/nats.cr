@@ -1,5 +1,9 @@
+require "./client_message"
+
 module Nats::Protocol
   struct Pub
+    include ClientMessage
+
     def initialize(@subject : String, @payload : Bytes, @reply_to : String? = nil)
     end
 

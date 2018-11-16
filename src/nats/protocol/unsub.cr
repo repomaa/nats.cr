@@ -1,5 +1,9 @@
+require "./client_message"
+
 module Nats::Protocol
   struct Unsub
+    include ClientMessage
+
     def initialize(@sid : String, @max_messages : Int32? = nil)
     end
 
