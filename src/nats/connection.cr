@@ -7,6 +7,9 @@ require "./subscription"
 
 module Nats
   class Connection
+    class ClosedError < Exception
+    end
+
     getter? closed
 
     def initialize(
@@ -90,11 +93,16 @@ module Nats
 
     private def inbox
       until closed?
-        message = read_protocol_message
-        @inbox.send(message)
+        begin
+          message = read_protocol_message
+          @inbox.send(message)
+        rescue ex : ClosedError
+          STDERR.puts(ex)
+          close
+        rescue ex : Protocol::ProtocolError
+          STDERR.puts(ex)
+        end
       end
-    ensure
-      close
     end
 
     private def outbox
@@ -103,8 +111,6 @@ module Nats
         break if message.nil?
         @socket << message
       end
-    ensure
-      close
     end
 
     private def handle_message(error : Protocol::Err)
@@ -165,7 +171,7 @@ module Nats
       when "+OK" then Protocol::Ok.from_io(@socket)
       when "PING" then Protocol::Ping.from_io(@socket)
       when "PONG" then Protocol::Pong.from_io(@socket)
-      when nil then raise Protocol::ProtocolError.new("Connection closed")
+      when nil then raise ClosedError.new("Connection closed")
       else raise Protocol::ProtocolError.new("Unsupported protocol message '#{type}' received")
       end
     end
@@ -174,7 +180,7 @@ module Nats
       String.build do |io|
         loop do
           char = @socket.read_char
-          raise Exception.new("EOF received") if char.nil?
+          raise ClosedError.new("Connection closed") if char.nil?
           break if char == ' ' || char == '\r' && @socket.read_char == '\n'
           io << char
         end
