@@ -50,9 +50,9 @@ module Nats
 
     def close
       @socket.close unless closed?
+      @closed = true
       @inbox.send(nil)
       @outbox.send(nil)
-      @closed = true
     end
 
     def listen
