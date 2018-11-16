@@ -8,7 +8,7 @@ TODO: Write a description here
 ```yaml
 dependencies:
   nats:
-    github: your-github-user/nats
+    github: jreinert/nats
 ```
 2. Run `shards install`
 
@@ -26,7 +26,7 @@ TODO: Write development instructions here
 
 ## Contributing
 
-1. Fork it (<https://github.com/your-github-user/nats/fork>)
+1. Fork it (<https://github.com/jreinert/nats/fork>)
 2. Create your feature branch (`git checkout -b my-new-feature`)
 3. Commit your changes (`git commit -am 'Add some feature'`)
 4. Push to the branch (`git push origin my-new-feature`)
@@ -34,4 +34,4 @@ TODO: Write development instructions here
 
 ## Contributors
 
-- [Joakim Reinert](https://github.com/your-github-user) - creator and maintainer
+- [Joakim Reinert](https://github.com/jreinert) - creator and maintainer
