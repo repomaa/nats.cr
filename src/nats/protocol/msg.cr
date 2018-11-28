@@ -43,10 +43,7 @@ module Nats::Protocol
 
       reply_to = rest_fields.size > 1 ? rest_fields.first : nil
       payload = Bytes.new(bytesize)
-      bytes_read = io.read(payload)
-      if bytes_read < bytesize
-        raise ProtocolError.new("Less than bytesize could be read from MSG payload")
-      end
+      io.read_fully?(payload) || ProtocolError.new("Unexpected EOF")
 
       io.gets("\r\n")
 
