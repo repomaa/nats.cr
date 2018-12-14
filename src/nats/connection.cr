@@ -24,6 +24,8 @@ module Nats
       @client_name : String? = nil,
       @logger : Logger = Logger.new(STDERR)
     )
+      @errors = Channel(Exception?).new(1)
+      @last_pong = Time.now
       @socket = TCPSocket.new(host, port)
       @subscriptions = {} of String => Subscription
       @max_message_counters = {} of String => Int32
@@ -33,7 +35,6 @@ module Nats
 
       spawn inbox
       spawn outbox
-      spawn listen
     end
 
     def self.new(url, **args)
@@ -49,20 +50,30 @@ module Nats
     end
 
     def close
-      @socket.close unless closed?
+      return if closed?
+      @socket.close
       @closed = true
       @inbox.send(nil)
       @outbox.send(nil)
+      @errors.send(nil)
     end
 
     def listen
+      spawn message_handler
+      error = @errors.receive
+      raise error unless error.nil?
+    ensure
+      close
+    end
+
+    def message_handler
       until closed?
         message = @inbox.receive
         break if message.nil?
         handle_message(message)
       end
-    ensure
-      close
+    rescue error : Exception
+      @errors.send(error)
     end
 
     def subscribe(subject : String, queue_group : String? = nil)
@@ -96,11 +107,10 @@ module Nats
         begin
           message = read_protocol_message
           @inbox.send(message)
-        rescue ex : ClosedError
-          STDERR.puts(ex)
-          close
         rescue ex : Protocol::ProtocolError
           STDERR.puts(ex)
+        rescue ex : Exception
+          @errors.send(ex)
         end
       end
     end
@@ -111,6 +121,8 @@ module Nats
         break if message.nil?
         @socket << message
       end
+    rescue ex : Exception
+      @errors.send(ex)
     end
 
     private def handle_message(error : Protocol::Err)
@@ -160,6 +172,7 @@ module Nats
     end
 
     private def handle_message(pong : Protocol::Pong)
+      @last_pong = Time.now
     end
 
     private def read_protocol_message
